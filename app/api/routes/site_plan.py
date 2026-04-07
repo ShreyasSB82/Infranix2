@@ -1,3 +1,5 @@
+# API routes for site plan generation, zoning rules retrieval, and plan management.
+
 import json, sqlite3, uuid
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +24,9 @@ from app.services.svg_renderer import render_svg
 router = APIRouter(tags=["site-plan"])
 
 DB_PATH = "plots.db"   # shared with existing LandMark DB
+
+
+# ─── DB init ──────────────────────────────────────────────────────────────────
 
 def _db():
     conn = sqlite3.connect(DB_PATH)
@@ -210,6 +215,9 @@ async def get_plan(plan_id: str):
         "num_floors": row["num_floors"],
         "created_at": row["created_at"],
     }
+
+
+# ─── Future integration stubs ──────────────────────────────────────────────────
 
 @router.post("/plans/{plan_id}/generate-floorplan")
 async def generate_floorplan(plan_id: str):

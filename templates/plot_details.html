@@ -121,7 +121,7 @@
             cursor: not-allowed
         }
 
-        #viewer-btn {
+        #viewer-btn, #interior-btn {
             width: 100%;
             padding: .65rem;
             border: 1px solid rgba(255, 255, 255, .2);
@@ -134,7 +134,7 @@
             display: none
         }
 
-        #viewer-btn.show {
+        #viewer-btn.show, #interior-btn.show {
             display: block
         }
 
@@ -255,6 +255,7 @@
 
             <button id="generate-btn">Generate Plan</button>
             <button id="viewer-btn">Open 3D Viewer</button>
+            <button id="interior-btn">Interior Layout</button>
             <div id="layout-options"></div>
 
             <div id="legend">
@@ -389,6 +390,7 @@
                         layout_name: picked.name,
                     }));
                     document.getElementById('viewer-btn').classList.add('show');
+                    document.getElementById('interior-btn').classList.add('show');
                     toast(`${picked.name} layout selected`);
                 });
             });
@@ -433,6 +435,9 @@
             document.getElementById('generate-btn').addEventListener('click', generatePlan);
             document.getElementById('viewer-btn').addEventListener('click', () => {
                 window.location.href = '/viewer';
+            });
+            document.getElementById('interior-btn').addEventListener('click', () => {
+                window.location.href = '/interior-layout';
             });
             updateTotals();
         });

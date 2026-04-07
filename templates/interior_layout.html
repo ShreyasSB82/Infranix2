@@ -241,57 +241,105 @@
     <script>
         let sitePlan = null;
 
-        function roomCard(name, area, note) {
-            return `<div class="room"><h4>${name} · ${area.toFixed(1)} m²</h4><p>${note}</p></div>`;
+        function getBuildingGeojson() {
+            if (!sitePlan) return null;
+            // Prefer the building zone feature from the generated site plan
+            const features = (sitePlan.zones && sitePlan.zones.features) || [];
+            const buildingFeature = features.find(f => f.properties && f.properties.zone === 'building');
+            if (buildingFeature) return buildingFeature.geometry;
+            // Fallback: wrap plot coordinates as a Polygon geometry
+            if (sitePlan.selectedPlot && sitePlan.selectedPlot.coordinates) {
+                return { type: 'Polygon', coordinates: [sitePlan.selectedPlot.coordinates] };
+            }
+            return null;
         }
 
-        function generateInterior() {
-            if (!sitePlan || !sitePlan.stats) return;
-            const building = sitePlan.stats.building_sqm || 0;
-            const floors = sitePlan.num_floors || 1;
-            const bedrooms = Math.max(1, +document.getElementById('bedrooms').value || 1);
-            const bathrooms = Math.max(1, +document.getElementById('bathrooms').value || 1);
-            const study = document.getElementById('study').value === 'yes';
-            const style = document.getElementById('style').value;
-
-            const perFloor = building / floors;
-            const livingPct = style === 'luxury' ? 0.26 : style === 'compact' ? 0.20 : 0.23;
-            const kitchenPct = style === 'compact' ? 0.10 : 0.12;
-            const circulationPct = 0.14;
-            const servicePct = 0.10;
-            let allocLeft = perFloor * (1 - livingPct - kitchenPct - circulationPct - servicePct);
-
-            const bedArea = allocLeft * 0.6 / bedrooms;
-            const bathArea = allocLeft * 0.25 / bathrooms;
-            const studyArea = study ? allocLeft * 0.15 : 0;
-            if (!study) allocLeft += allocLeft * 0.15;
-
-            let html = '';
-            for (let f = 1; f <= floors; f++) {
-                html += `<div class="floor"><h5>Floor ${f}</h5><div class="rooms">`;
-                html += roomCard('Living / Family', perFloor * livingPct, 'Main shared area');
-                html += roomCard('Kitchen + Dining', perFloor * kitchenPct, 'Cooking + dining');
-                for (let i = 1; i <= bedrooms; i++) html += roomCard(`Bedroom ${i}`, bedArea, 'Private sleeping space');
-                for (let i = 1; i <= bathrooms; i++) html += roomCard(`Bathroom ${i}`, bathArea, 'Attached/common bath');
-                if (study) html += roomCard('Study / Office', studyArea, 'Quiet work area');
-                html += roomCard('Circulation', perFloor * circulationPct, 'Stairs, lobby, passage');
-                html += roomCard('Utility / Storage', perFloor * servicePct, 'Storage, wash, service');
-                html += `</div></div>`;
+        async function generateInterior() {
+            const buildingGeojson = getBuildingGeojson();
+            if (!buildingGeojson) {
+                document.getElementById('layout-output').innerHTML =
+                    '<p style="color:#ffb4b4;padding:20px 0">Could not find building footprint. Please select a site plan layout first.</p>';
+                return;
             }
 
-            document.getElementById('layout-output').innerHTML = html;
+            const numFloors = sitePlan.num_floors || 1;
+            const bedrooms  = Math.max(1, +document.getElementById('bedrooms').value  || 3);
+            const bathrooms = Math.max(1, +document.getElementById('bathrooms').value || 2);
+            const hasStudy  = document.getElementById('study').value === 'yes';
+            const style     = document.getElementById('style').value;
+
+            document.getElementById('layout-output').innerHTML =
+                '<p style="color:#9fd1ff;text-align:center;padding:28px 0">Generating floor plans…</p>';
+            document.getElementById('generate').disabled = true;
+
+            try {
+                const res = await fetch('/api/interior/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        building_geojson: buildingGeojson,
+                        num_floors: numFloors,
+                        bedrooms,
+                        bathrooms,
+                        has_study: hasStudy,
+                        style,
+                    }),
+                });
+
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({ detail: res.statusText }));
+                    throw new Error(err.detail || res.statusText);
+                }
+
+                const data = await res.json();
+
+                // Update stat cards from real engine output
+                document.getElementById('building-area').textContent =
+                    data.total_area_sqm.toFixed(1) + ' m²';
+                document.getElementById('builtup-area').textContent =
+                    (data.total_area_sqm * data.floors.length).toFixed(1) + ' m²';
+                document.getElementById('floors').textContent = String(data.floors.length);
+
+                // Render each floor: SVG + room cards
+                let html = '';
+                for (const floor of data.floors) {
+                    html += `<div class="floor">
+                        <h5>Floor ${floor.floor}</h5>
+                        <div style="margin-bottom:10px;line-height:0">${floor.svg}</div>
+                        <div class="rooms">
+                            ${floor.rooms.map(r => `
+                                <div class="room" style="border-left:3px solid ${r.color}">
+                                    <h4>${r.name} · ${r.area_sqm.toFixed(1)} m²</h4>
+                                    <p>${r.shape === 'rectangular' ? 'Rectangular room' : 'Corner / triangular space'}</p>
+                                </div>`).join('')}
+                        </div>
+                    </div>`;
+                }
+                document.getElementById('layout-output').innerHTML = html;
+
+            } catch (e) {
+                document.getElementById('layout-output').innerHTML =
+                    `<p style="color:#ffb4b4;padding:20px 0">Error: ${e.message}</p>`;
+            } finally {
+                document.getElementById('generate').disabled = false;
+            }
         }
 
         window.addEventListener('DOMContentLoaded', () => {
             const raw = localStorage.getItem('generatedSitePlan');
             if (!raw) {
-                document.getElementById('layout-output').innerHTML = '<p style="color:#ffb4b4">No site plan data found. Generate a site plan first.</p>';
+                document.getElementById('layout-output').innerHTML =
+                    '<p style="color:#ffb4b4">No site plan data found. Generate a site plan first.</p>';
                 return;
             }
             sitePlan = JSON.parse(raw);
-            document.getElementById('building-area').textContent = (sitePlan.stats.building_sqm || 0).toFixed(1) + ' m²';
-            document.getElementById('builtup-area').textContent = (sitePlan.stats.total_built_up_sqm || 0).toFixed(1) + ' m²';
+            // Pre-fill stats from stored site plan data
+            document.getElementById('building-area').textContent =
+                (sitePlan.stats && sitePlan.stats.building_sqm || 0).toFixed(1) + ' m²';
+            document.getElementById('builtup-area').textContent =
+                (sitePlan.stats && sitePlan.stats.total_built_up_sqm || 0).toFixed(1) + ' m²';
             document.getElementById('floors').textContent = String(sitePlan.num_floors || 1);
+
             document.getElementById('generate').addEventListener('click', generateInterior);
             generateInterior();
         });

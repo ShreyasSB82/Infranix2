@@ -1,3 +1,5 @@
+# API routes for layout planning, providing endpoints to generate multiple site layout options.
+
 from fastapi import APIRouter, HTTPException
 
 from app.models.layout_planner import MultiLayoutRequest, MultiLayoutResponse
@@ -8,11 +10,18 @@ router = APIRouter(tags=["layout-planner"])
 
 @router.get("/strategies")
 async def get_strategies():
+    """Return metadata about all available layout strategies."""
     return {"strategies": list_strategies()}
 
 
 @router.post("/generate", response_model=MultiLayoutResponse)
 async def generate_layouts(body: MultiLayoutRequest):
+    """
+    Generate multiple diverse site layout options.
+
+    Accepts a GeoJSON plot polygon, percentage-based zone preferences,
+    and site constraints. Returns top N scored layouts.
+    """
     prefs_fractions = body.preferences.as_fractions()
 
     try:
