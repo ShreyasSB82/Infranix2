@@ -24,14 +24,14 @@ from shapely.ops import transform as shapely_transform, unary_union
 
 # ── colour palette ────────────────────────────────────────────────────────────
 ROOM_COLORS: Dict[str, str] = {
-    "living":      "#4A90D9",
-    "kitchen":     "#E8B84B",
-    "bedroom":     "#7B68EE",
-    "bathroom":    "#5CB85C",
-    "study":       "#E67E22",
-    "circulation": "#718096",
-    "utility":     "#A0AEC0",
-    "corner":      "#A0785A",   # triangular corner / nook
+    "living":      "#3B82F6",   # vivid blue
+    "kitchen":     "#F59E0B",   # amber
+    "bedroom":     "#8B5CF6",   # violet
+    "bathroom":    "#10B981",   # emerald
+    "study":       "#F97316",   # orange
+    "circulation": "#64748B",   # slate
+    "utility":     "#0EA5E9",   # sky blue
+    "corner":      "#A16207",   # dark amber / storage
 }
 
 ROOM_LABELS: Dict[str, str] = {
@@ -327,12 +327,11 @@ def _render_svg(building: Polygon, rooms: List[Dict]) -> str:
     for room in rooms:
         pts   = _poly_points(room["coords"], tx, ty)
         color = room["color"]
-        alpha = "0.58" if room["shape"] == "rectangular" else "0.42"
 
-        # Room fill
+        # Solid room fill with white wall border
         parts.append(
-            f'<polygon points="{pts}" fill="{color}" fill-opacity="{alpha}" '
-            f'stroke="{color}" stroke-opacity="0.9" stroke-width="1.5"/>'
+            f'<polygon points="{pts}" fill="{color}" fill-opacity="0.82" '
+            f'stroke="#ffffff" stroke-opacity="0.55" stroke-width="1.5"/>'
         )
 
         # Centroid label
@@ -341,14 +340,20 @@ def _render_svg(building: Polygon, rooms: List[Dict]) -> str:
         name = room["name"]
         fs   = 9 if len(name) > 16 else 10
 
+        # Drop-shadow for legibility
         parts.append(
-            f'<text x="{cx}" y="{cy - 5}" font-size="{fs}" fill="white" '
+            f'<text x="{cx}" y="{cy - 4}" font-size="{fs}" fill="rgba(0,0,0,0.55)" '
             f'text-anchor="middle" font-family="system-ui,sans-serif" '
-            f'font-weight="600">{name}</text>'
+            f'font-weight="700" dx="0.5" dy="0.5">{name}</text>'
         )
         parts.append(
-            f'<text x="{cx}" y="{cy + 8}" font-size="8.5" '
-            f'fill="rgba(255,255,255,0.65)" text-anchor="middle" '
+            f'<text x="{cx}" y="{cy - 4}" font-size="{fs}" fill="white" '
+            f'text-anchor="middle" font-family="system-ui,sans-serif" '
+            f'font-weight="700">{name}</text>'
+        )
+        parts.append(
+            f'<text x="{cx}" y="{cy + 9}" font-size="8" '
+            f'fill="rgba(255,255,255,0.8)" text-anchor="middle" '
             f'font-family="system-ui,sans-serif">{room["area_sqm"]} m²</text>'
         )
 
@@ -394,6 +399,7 @@ def generate_floor_plan(
                     "shape":    r["shape"],
                     "area_sqm": r["area_sqm"],
                     "color":    r["color"],
+                    "coords":   [[c[0], c[1]] for c in r["coords"]],
                 }
                 for r in rooms
             ],

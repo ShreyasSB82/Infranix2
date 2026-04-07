@@ -18,271 +18,424 @@
     #ui-panel {
       position: absolute; top: 18px; left: 18px; z-index: 50;
       width: 300px; border-radius: 10px; padding: 14px;
-      background: rgba(16,24,40,.88); border: 1px solid rgba(255,255,255,.12);
-      backdrop-filter: blur(8px);
+      background: rgba(16,24,40,.92); border: 1px solid rgba(255,255,255,.12);
+      backdrop-filter: blur(8px); max-height: calc(100vh - 40px); overflow-y: auto;
     }
     h2 { font-size: 1rem; margin-bottom: 12px; color: #60b4ff; }
-    .view-toggles { display: flex; gap: 8px; margin-bottom: 14px; }
+    .section-label {
+      font-size: .75rem; font-weight: 600; color: rgba(255,255,255,.45);
+      text-transform: uppercase; letter-spacing: .06em; margin: 12px 0 6px;
+    }
+    .view-toggles { display: flex; gap: 8px; margin-bottom: 4px; }
     .btn {
       flex: 1; border: 1px solid rgba(255,255,255,.2); border-radius: 7px; padding: 8px;
       background: rgba(255,255,255,.06); color: #fff; cursor: pointer; font-size: .84rem;
     }
     .btn.active { background: #60b4ff; color: #00121f; border-color: #60b4ff; font-weight: 700; }
+    .btn:hover:not(.active) { background: rgba(255,255,255,.12); }
+    #fpv-hint {
+      display: none; font-size: .78rem; color: rgba(255,255,255,.5);
+      margin: 4px 0 8px;
+    }
+    .floor-btns { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 4px; }
+    .floor-btn {
+      border: 1px solid rgba(255,255,255,.2); border-radius: 6px; padding: 5px 10px;
+      background: rgba(255,255,255,.06); color: #fff; cursor: pointer; font-size: .8rem;
+    }
+    .floor-btn.active { background: #a78bfa; color: #0d0921; border-color: #a78bfa; font-weight: 700; }
+    .floor-btn:hover:not(.active) { background: rgba(167,139,250,.18); }
     .layer-item { display: flex; justify-content: space-between; align-items: center; font-size: .82rem; margin-bottom: 8px; }
     .layer-item input { accent-color: #60b4ff; }
+    #room-legend { margin-top: 4px; }
+    .legend-row { display: flex; align-items: center; gap: 7px; font-size: .78rem; margin-bottom: 5px; }
+    .legend-dot { width: 11px; height: 11px; border-radius: 2px; flex-shrink: 0; }
     #back-btn {
       position: absolute; top: 18px; right: 18px; z-index: 50; text-decoration: none;
       border: 1px solid rgba(255,255,255,.2); border-radius: 7px; padding: 7px 12px;
       background: rgba(255,255,255,.08); color: #fff; font-size: .82rem;
     }
+    #back-btn:hover { background: rgba(255,255,255,.15); }
+    #tooltip {
+      position: absolute; z-index: 60; pointer-events: none;
+      background: rgba(10,18,36,.92); border: 1px solid rgba(255,255,255,.15);
+      border-radius: 7px; padding: 8px 11px; font-size: .8rem; display: none;
+      max-width: 180px;
+    }
+    #tooltip strong { display: block; margin-bottom: 3px; color: #9fd1ff; }
   </style>
 </head>
 <body>
-  <div id="loading">Loading Geometry Engine...</div>
+  <div id="loading">Loading Geometry Engine…</div>
   <a id="back-btn" href="/plot-details">Exit Viewer</a>
+  <div id="tooltip"></div>
+
   <div id="ui-panel">
-    <h2>Infrastructure Viewer (MapLibre)</h2>
+    <h2>Infrastructure Viewer</h2>
+
+    <div class="section-label">View Mode</div>
     <div class="view-toggles">
       <button class="btn active" id="btn-2d">2D Plan</button>
       <button class="btn" id="btn-3d">3D Model</button>
       <button class="btn" id="btn-fpv">First Person</button>
     </div>
-    <div id="fpv-hint" style="display:none; font-size:.78rem; color:rgba(255,255,255,.5); margin-top:-8px; margin-bottom:12px;">
-      Use <b>WASD</b> to walk, <b>Mouse</b> to look.
+    <div id="fpv-hint">Use <b>WASD</b> to walk, <b>Mouse</b> to look.</div>
+
+    <div id="floor-section" style="display:none">
+      <div class="section-label">Floor</div>
+      <div class="floor-btns" id="floor-btns"></div>
     </div>
+
+    <div class="section-label">Layers</div>
     <div id="layer-controls"></div>
+
+    <div id="room-legend-section" style="display:none">
+      <div class="section-label">Room Types</div>
+      <div id="room-legend"></div>
+    </div>
   </div>
+
   <div id="map"></div>
 
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <script>
-    const loadingEl = document.getElementById("loading");
+    const FLOOR_H = 3.2; // metres per floor
+    const loadingEl = document.getElementById('loading');
     const layerState = {};
-    let map;
+    let map, isFPV = false;
+    const keys = {};
+    let currentFloor = 'all';
+    let numFloors = 1;
 
     function setLoadingError(msg) { loadingEl.textContent = msg; }
 
     function colorForZone(z) {
-      const key = (z || "").toLowerCase();
-      if (key.includes("building")) return "#4A90D9";
-      if (key.includes("green")) return "#5cb85c";
-      if (key.includes("park")) return "#9B9B9B";
-      if (key.includes("utility")) return "#c0692a";
-      return "#60b4ff";
+      const k = (z || '').toLowerCase();
+      if (k.includes('building')) return '#4A90D9';
+      if (k.includes('green'))    return '#5cb85c';
+      if (k.includes('park'))     return '#9B9B9B';
+      if (k.includes('utility'))  return '#c0692a';
+      return '#60b4ff';
     }
 
     function centerFromFeatures(features) {
-      let sx = 0, sy = 0, count = 0;
-      try {
-        features.forEach(f => {
-          const coords = f.geometry?.coordinates;
-          if (!coords) return;
-          // Handle Polygon (3D array) or MultiPolygon (4D array)
-          const rings = f.geometry.type === "MultiPolygon" ? coords.flat(1) : coords;
-          rings.forEach(ring => {
-            if (Array.isArray(ring)) {
-              ring.forEach(pt => {
-                if (Array.isArray(pt) && pt.length >= 2) {
-                  sx += pt[0]; sy += pt[1]; count += 1;
-                }
-              });
-            }
+      let sx = 0, sy = 0, n = 0;
+      features.forEach(f => {
+        const coords = f.geometry?.coordinates;
+        if (!coords) return;
+        const rings = f.geometry.type === 'MultiPolygon' ? coords.flat(1) : coords;
+        rings.forEach(ring => {
+          if (Array.isArray(ring)) ring.forEach(pt => {
+            if (Array.isArray(pt) && pt.length >= 2) { sx += pt[0]; sy += pt[1]; n++; }
           });
         });
-      } catch (e) { console.warn("Center calculation failed", e); }
-      if (!count || isNaN(sx) || isNaN(sy)) return [80.2707, 13.0827];
-      return [sx / count, sy / count];
+      });
+      if (!n || isNaN(sx)) return [80.2707, 13.0827];
+      return [sx / n, sy / n];
     }
 
+    // ── Build room GeoJSON from interiorFloorPlan ─────────────────────────────
+    function buildRoomFeatures(interior) {
+      const features = [];
+      if (!interior?.floors) return features;
+      for (const floor of interior.floors) {
+        const fn = floor.floor;
+        const base = (fn - 1) * FLOOR_H;
+        const top  = fn * FLOOR_H;
+        for (const room of floor.rooms) {
+          if (!room.coords || room.coords.length < 3) continue;
+          const ring = [...room.coords];
+          // ensure ring is closed
+          const first = ring[0], last = ring[ring.length - 1];
+          if (first[0] !== last[0] || first[1] !== last[1]) ring.push(first);
+          features.push({
+            type: 'Feature',
+            geometry: { type: 'Polygon', coordinates: [ring] },
+            properties: {
+              floor:    fn,
+              name:     room.name,
+              type:     room.type,
+              color:    room.color,
+              area_sqm: room.area_sqm,
+              shape:    room.shape,
+              base:     base,
+              height:   top,
+            }
+          });
+        }
+      }
+      return features;
+    }
+
+    // ── Floor selector ────────────────────────────────────────────────────────
+    function buildFloorPicker(n) {
+      if (n <= 1) return; // no picker needed for single floor
+      const container = document.getElementById('floor-btns');
+      document.getElementById('floor-section').style.display = 'block';
+      let html = `<button class="floor-btn active" data-floor="all">All</button>`;
+      for (let i = 1; i <= n; i++) {
+        html += `<button class="floor-btn" data-floor="${i}">Floor ${i}</button>`;
+      }
+      container.innerHTML = html;
+      container.querySelectorAll('.floor-btn').forEach(btn => {
+        btn.addEventListener('click', () => selectFloor(btn.dataset.floor));
+      });
+    }
+
+    function selectFloor(floor) {
+      currentFloor = floor === 'all' ? 'all' : Number(floor);
+      document.querySelectorAll('.floor-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.floor == floor);
+      });
+      applyFloorFilter();
+    }
+
+    function applyFloorFilter() {
+      const f = currentFloor;
+      const filter = f === 'all' ? null : ['==', ['get', 'floor'], f];
+      ['rooms-extrusion', 'rooms-fill', 'rooms-line'].forEach(id => {
+        if (map.getLayer(id)) map.setFilter(id, filter);
+      });
+    }
+
+    // ── Room legend ───────────────────────────────────────────────────────────
+    function buildLegend(interior) {
+      if (!interior?.floors?.length) return;
+      const seen = new Map();
+      for (const floor of interior.floors) {
+        for (const r of floor.rooms) {
+          if (!seen.has(r.type)) seen.set(r.type, { label: r.name.replace(/\s\d+$/, ''), color: r.color });
+        }
+      }
+      const container = document.getElementById('room-legend');
+      container.innerHTML = [...seen.values()].map(({ label, color }) =>
+        `<div class="legend-row"><div class="legend-dot" style="background:${color}"></div><span>${label}</span></div>`
+      ).join('');
+      document.getElementById('room-legend-section').style.display = 'block';
+    }
+
+    // ── Layer toggle helper ───────────────────────────────────────────────────
     function addLayerToggle(label, key, onChange, checked = true) {
-      const wrap = document.getElementById("layer-controls");
-      const row = document.createElement("div");
-      row.className = "layer-item";
-      row.innerHTML = `<span>${label}</span><input type="checkbox" ${checked ? "checked" : ""} />`;
-      row.querySelector("input").addEventListener("change", e => onChange(e.target.checked));
+      const wrap = document.getElementById('layer-controls');
+      const row  = document.createElement('div');
+      row.className = 'layer-item';
+      row.innerHTML = `<span>${label}</span><input type="checkbox" ${checked ? 'checked' : ''} />`;
+      row.querySelector('input').addEventListener('change', e => onChange(e.target.checked));
       wrap.appendChild(row);
       layerState[key] = checked;
     }
 
-    let isFPV = false;
-    const keys = {};
-
+    // ── View mode ─────────────────────────────────────────────────────────────
     function apply3DMode(mode) {
-      // mode: '2d' | '3d' | 'fpv'
-      isFPV = (mode === 'fpv');
-      
-      const pitch = (mode === '2d') ? 0 : (mode === '3d' ? 62 : 82);
-      const bearing = (mode === '2d') ? 0 : (mode === '3d' ? -25 : map.getBearing());
-      const zoom = (mode === 'fpv') ? 18.5 : (mode === '2d' ? 16 : 17);
-
+      isFPV = mode === 'fpv';
       map.easeTo({
-        pitch: pitch,
-        bearing: bearing,
-        zoom: zoom,
-        duration: 800
+        pitch:   mode === '2d' ? 0  : mode === '3d' ? 62 : 82,
+        bearing: mode === '2d' ? 0  : mode === '3d' ? -25 : map.getBearing(),
+        zoom:    mode === 'fpv' ? 18.5 : mode === '2d' ? 16 : 17,
+        duration: 800,
       });
+      document.getElementById('btn-2d').classList.toggle('active', mode === '2d');
+      document.getElementById('btn-3d').classList.toggle('active', mode === '3d');
+      document.getElementById('btn-fpv').classList.toggle('active', mode === 'fpv');
+      document.getElementById('fpv-hint').style.display = isFPV ? 'block' : 'none';
 
-      document.getElementById("btn-2d").classList.toggle("active", mode === '2d');
-      document.getElementById("btn-3d").classList.toggle("active", mode === '3d');
-      document.getElementById("btn-fpv").classList.toggle("active", mode === 'fpv');
-      document.getElementById("fpv-hint").style.display = isFPV ? "block" : "none";
-
-      if (map.getLayer("zones-extrusion")) {
-        map.setLayoutProperty("zones-extrusion", "visibility", (mode !== '2d') ? "visible" : "none");
-      }
+      const show3D = mode !== '2d';
+      ['zones-extrusion', 'rooms-extrusion'].forEach(id => {
+        if (map.getLayer(id))
+          map.setLayoutProperty(id, 'visibility', show3D ? 'visible' : 'none');
+      });
     }
 
+    // ── FPV movement ──────────────────────────────────────────────────────────
     function setupFPV() {
-      window.addEventListener("keydown", e => { keys[e.key.toLowerCase()] = true; });
-      window.addEventListener("keyup", e => { keys[e.key.toLowerCase()] = false; });
-
-      function animate() {
+      window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; });
+      window.addEventListener('keyup',   e => { keys[e.key.toLowerCase()] = false; });
+      (function animate() {
         if (isFPV) {
-          const camera = map.getFreeCameraOptions();
-          const bearing = map.getBearing();
-          const rad = (bearing * Math.PI) / 180;
-          const step = 0.000008; // ~0.8m per frame
-          
-          let center = map.getCenter();
-          let lng = center.lng;
-          let lat = center.lat;
-
-          if (keys['w']) {
-            lng += step * Math.sin(rad);
-            lat += step * Math.cos(rad);
-          }
-          if (keys['s']) {
-            lng -= step * Math.sin(rad);
-            lat -= step * Math.cos(rad);
-          }
-          if (keys['a']) {
-            lng -= step * Math.cos(rad);
-            lat += step * Math.sin(rad);
-          }
-          if (keys['d']) {
-            lng += step * Math.cos(rad);
-            lat -= step * Math.sin(rad);
-          }
-
-          if (keys['w'] || keys['s'] || keys['a'] || keys['d']) {
-            map.setCenter([lng, lat]);
-          }
+          const rad  = (map.getBearing() * Math.PI) / 180;
+          const step = 0.000008;
+          let { lng, lat } = map.getCenter();
+          if (keys['w']) { lng += step * Math.sin(rad); lat += step * Math.cos(rad); }
+          if (keys['s']) { lng -= step * Math.sin(rad); lat -= step * Math.cos(rad); }
+          if (keys['a']) { lng -= step * Math.cos(rad); lat += step * Math.sin(rad); }
+          if (keys['d']) { lng += step * Math.cos(rad); lat -= step * Math.sin(rad); }
+          if (keys['w'] || keys['s'] || keys['a'] || keys['d']) map.setCenter([lng, lat]);
         }
         requestAnimationFrame(animate);
-      }
-      requestAnimationFrame(animate);
+      })();
     }
 
+    // ── Tooltip ───────────────────────────────────────────────────────────────
+    function setupTooltip() {
+      const tip = document.getElementById('tooltip');
+      map.on('mousemove', 'rooms-extrusion', e => {
+        const p = e.features[0]?.properties;
+        if (!p) return;
+        tip.style.display = 'block';
+        tip.style.left = (e.point.x + 14) + 'px';
+        tip.style.top  = (e.point.y - 10) + 'px';
+        tip.innerHTML  = `<strong>${p.name}</strong>${p.area_sqm.toFixed(1)} m² · Floor ${p.floor}<br><span style="color:rgba(255,255,255,.5)">${p.shape}</span>`;
+        map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', 'rooms-extrusion', () => {
+        tip.style.display = 'none';
+        map.getCanvas().style.cursor = '';
+      });
+      // also for 2D fill
+      map.on('mousemove', 'rooms-fill', e => {
+        const p = e.features[0]?.properties;
+        if (!p) return;
+        tip.style.display = 'block';
+        tip.style.left = (e.point.x + 14) + 'px';
+        tip.style.top  = (e.point.y - 10) + 'px';
+        tip.innerHTML  = `<strong>${p.name}</strong>${p.area_sqm.toFixed(1)} m² · Floor ${p.floor}`;
+        map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', 'rooms-fill', () => {
+        tip.style.display = 'none';
+        map.getCanvas().style.cursor = '';
+      });
+    }
+
+    // ── Main init ─────────────────────────────────────────────────────────────
     function initViewer() {
       try {
-        const raw = localStorage.getItem("generatedSitePlan");
-        if (!raw) return setLoadingError("No layout found. Generate and select a layout first.");
-        const plan = JSON.parse(raw);
-        const features = plan?.zones?.features;
-        if (!Array.isArray(features) || !features.length) {
-          return setLoadingError("Layout data is empty. Regenerate a layout from Plot Details.");
-        }
+        const rawPlan     = localStorage.getItem('generatedSitePlan');
+        const rawInterior = localStorage.getItem('interiorFloorPlan');
 
-        const prepared = features.map(f => {
-          const zone = f.properties?.zone || "zone";
-          const floors = Number(f.properties?.num_floors || plan?.num_floors || plan?.stats?.floors || 1);
+        if (!rawPlan) return setLoadingError('No layout found. Generate and select a layout first.');
+        const plan     = JSON.parse(rawPlan);
+        const interior = rawInterior ? JSON.parse(rawInterior) : null;
+
+        const zoneFeatures = plan?.zones?.features;
+        if (!Array.isArray(zoneFeatures) || !zoneFeatures.length)
+          return setLoadingError('Layout data is empty. Regenerate a layout from Plot Details.');
+
+        numFloors = plan.num_floors || 1;
+
+        // Prepare zone features with height
+        const prepared = zoneFeatures.map(f => {
+          const zone   = f.properties?.zone || 'zone';
+          const floors = Number(f.properties?.num_floors || numFloors || 1);
           return {
             ...f,
             properties: {
               ...f.properties,
               zone,
-              color: f.properties?.color || colorForZone(zone),
-              height: zone === "building" ? Math.max(3, floors * 3.2) : 1.5
+              color:  f.properties?.color || colorForZone(zone),
+              height: zone === 'building' ? Math.max(3, floors * FLOOR_H) : 1.5,
             }
           };
         });
 
+        // Prepare room features
+        const roomFeatures = buildRoomFeatures(interior);
+        const hasRooms = roomFeatures.length > 0;
+
         map = new maplibregl.Map({
-          container: "map",
-          style: "https://demotiles.maplibre.org/style.json",
-          center: centerFromFeatures(prepared),
-          zoom: 16,
-          pitch: 0,
-          bearing: 0
+          container: 'map',
+          style:     'https://demotiles.maplibre.org/style.json',
+          center:    centerFromFeatures(prepared),
+          zoom: 16, pitch: 0, bearing: 0,
         });
-        map.addControl(new maplibregl.NavigationControl(), "top-right");
+        map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
-        map.on("load", () => {
-          map.addSource("zones", {
-            type: "geojson",
-            data: { type: "FeatureCollection", features: prepared }
-          });
-
-          map.addLayer({
-            id: "zones-fill",
-            type: "fill",
-            source: "zones",
-            paint: { "fill-color": ["get", "color"], "fill-opacity": 0.35 }
+        map.on('load', () => {
+          // ── Zone (site plan) layers ──────────────────────────────────────
+          map.addSource('zones', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: prepared }
           });
           map.addLayer({
-            id: "zones-line",
-            type: "line",
-            source: "zones",
-            paint: { "line-color": ["get", "color"], "line-width": 1.3, "line-opacity": 0.9 }
+            id: 'zones-fill', type: 'fill', source: 'zones',
+            paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.25 }
           });
           map.addLayer({
-            id: "zones-extrusion",
-            type: "fill-extrusion",
-            source: "zones",
-            layout: { visibility: "none" },
+            id: 'zones-line', type: 'line', source: 'zones',
+            paint: { 'line-color': ['get', 'color'], 'line-width': 1.3, 'line-opacity': 0.85 }
+          });
+          map.addLayer({
+            id: 'zones-extrusion', type: 'fill-extrusion', source: 'zones',
+            layout: { visibility: 'none' },
             paint: {
-              "fill-extrusion-color": ["get", "color"],
-              "fill-extrusion-height": ["get", "height"],
-              "fill-extrusion-base": 0,
-              "fill-extrusion-opacity": 0.92
+              'fill-extrusion-color':   ['get', 'color'],
+              'fill-extrusion-height':  ['get', 'height'],
+              'fill-extrusion-base':    0,
+              'fill-extrusion-opacity': hasRooms ? 0.12 : 0.88,
             }
           });
 
-          const zoneList = [...new Set(prepared.map(f => f.properties.zone))];
-          addLayerToggle("Roads / Boundaries", "zones-line", v => map.setLayoutProperty("zones-line", "visibility", v ? "visible" : "none"));
-          addLayerToggle("Zone Footprints", "zones-fill", v => map.setLayoutProperty("zones-fill", "visibility", v ? "visible" : "none"));
-          addLayerToggle("3D Massing", "zones-extrusion", v => map.setLayoutProperty("zones-extrusion", "visibility", v ? "visible" : "none"), false);
-
-          zoneList.forEach(zone => {
-            addLayerToggle(zone.charAt(0).toUpperCase() + zone.slice(1), `z-${zone}`, visible => {
-              const active = zoneList.filter(z => layerState[`z-${z}`] !== false);
-              map.setFilter("zones-fill", ["in", ["get", "zone"], ["literal", active]]);
-              map.setFilter("zones-line", ["in", ["get", "zone"], ["literal", active]]);
-              map.setFilter("zones-extrusion", ["in", ["get", "zone"], ["literal", active]]);
+          // ── Room layers (if interior plan exists) ────────────────────────
+          if (hasRooms) {
+            map.addSource('rooms', {
+              type: 'geojson',
+              data: { type: 'FeatureCollection', features: roomFeatures }
             });
-          });
+            map.addLayer({
+              id: 'rooms-fill', type: 'fill', source: 'rooms',
+              layout: { visibility: 'visible' },
+              paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.82 }
+            });
+            map.addLayer({
+              id: 'rooms-line', type: 'line', source: 'rooms',
+              layout: { visibility: 'visible' },
+              paint: { 'line-color': '#ffffff', 'line-width': 1.2, 'line-opacity': 0.6 }
+            });
+            map.addLayer({
+              id: 'rooms-extrusion', type: 'fill-extrusion', source: 'rooms',
+              layout: { visibility: 'none' },
+              paint: {
+                'fill-extrusion-color':   ['get', 'color'],
+                'fill-extrusion-height':  ['get', 'height'],
+                'fill-extrusion-base':    ['get', 'base'],
+                'fill-extrusion-opacity': 0.95,
+              }
+            });
 
-          document.getElementById("btn-2d").addEventListener("click", () => apply3DMode('2d'));
-          document.getElementById("btn-3d").addEventListener("click", () => {
-            if (!layerState["zones-extrusion"]) {
-              layerState["zones-extrusion"] = true;
-              map.setLayoutProperty("zones-extrusion", "visibility", "visible");
-            }
+            buildFloorPicker(interior.floors.length);
+            buildLegend(interior);
+            setupTooltip();
+          }
+
+          // ── Layer toggles ────────────────────────────────────────────────
+          addLayerToggle('Zone Boundaries', 'zones-line',
+            v => map.setLayoutProperty('zones-line', 'visibility', v ? 'visible' : 'none'));
+          addLayerToggle('Zone Footprints', 'zones-fill',
+            v => map.setLayoutProperty('zones-fill', 'visibility', v ? 'visible' : 'none'));
+          addLayerToggle('Building Shell (3D)', 'zones-extrusion',
+            v => map.setLayoutProperty('zones-extrusion', 'visibility', v ? 'visible' : 'none'), false);
+
+          if (hasRooms) {
+            addLayerToggle('Room Footprints', 'rooms-fill',
+              v => { map.setLayoutProperty('rooms-fill', 'visibility', v ? 'visible' : 'none');
+                     map.setLayoutProperty('rooms-line', 'visibility', v ? 'visible' : 'none'); });
+            addLayerToggle('Room Volumes (3D)', 'rooms-extrusion',
+              v => map.setLayoutProperty('rooms-extrusion', 'visibility', v ? 'visible' : 'none'), false);
+          }
+
+          // ── View mode buttons ────────────────────────────────────────────
+          document.getElementById('btn-2d').addEventListener('click', () => apply3DMode('2d'));
+          document.getElementById('btn-3d').addEventListener('click', () => {
             apply3DMode('3d');
           });
-          document.getElementById("btn-fpv").addEventListener("click", () => {
-            if (!layerState["zones-extrusion"]) {
-              layerState["zones-extrusion"] = true;
-              map.setLayoutProperty("zones-extrusion", "visibility", "visible");
-            }
+          document.getElementById('btn-fpv').addEventListener('click', () => {
             apply3DMode('fpv');
           });
 
           setupFPV();
-          loadingEl.style.display = "none";
+          loadingEl.style.display = 'none';
         });
+
       } catch (err) {
-        console.error("Viewer Init Error:", err);
-        setLoadingError(`Error initializing viewer: ${err.message}. Check console for details.`);
+        console.error('Viewer Init Error:', err);
+        setLoadingError(`Error: ${err.message}`);
       }
     }
 
-    document.addEventListener("DOMContentLoaded", initViewer);
+    document.addEventListener('DOMContentLoaded', initViewer);
     setTimeout(() => {
-      if (loadingEl.style.display !== "none" && loadingEl.textContent === "Loading Geometry Engine...") {
-        setLoadingError("Viewer init timed out. Go back, select a layout, then reopen viewer.");
-      }
-    }, 7000);
+      if (loadingEl.style.display !== 'none' && loadingEl.textContent === 'Loading Geometry Engine…')
+        setLoadingError('Viewer init timed out. Go back, select a layout, then reopen viewer.');
+    }, 9000);
   </script>
 </body>
 </html>

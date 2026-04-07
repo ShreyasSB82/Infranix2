@@ -293,6 +293,9 @@
 
                 const data = await res.json();
 
+                // Persist for 3D viewer
+                localStorage.setItem('interiorFloorPlan', JSON.stringify(data));
+
                 // Update stat cards from real engine output
                 document.getElementById('building-area').textContent =
                     data.total_area_sqm.toFixed(1) + ' m²';

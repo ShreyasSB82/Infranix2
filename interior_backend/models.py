@@ -17,6 +17,7 @@ class RoomData(BaseModel):
     shape: str                                 # rectangular | triangular
     area_sqm: float
     color: str
+    coords: List[List[float]]                  # [[lon, lat], ...] closed ring in WGS84
 
 
 class FloorData(BaseModel):
